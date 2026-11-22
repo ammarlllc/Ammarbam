@@ -1,0 +1,6 @@
+{
+  "name": "Ammar Share",
+  "description": "High-speed peer-to-peer file, app, video, and folder sharing app. Made with Ammar App Software.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

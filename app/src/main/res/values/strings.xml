@@ -1,0 +1,24 @@
+<resources>
+    <string name="app_name">Ammar Share</string>
+    <string name="splash_credit">MADE WITH AMMAR APP SOFTWARE</string>
+    <string name="splash_tagline">ULTRA-FAST P2P TRANSFER ENGINE</string>
+    <string name="nav_transfer">Transfer</string>
+    <string name="nav_select">Select</string>
+    <string name="nav_history">Received</string>
+    <string name="action_send">SEND</string>
+    <string name="action_receive">RECEIVE</string>
+    <string name="send_subtitle">Apps, Videos, Folders &amp; Files</string>
+    <string name="receive_subtitle">Open Radar &amp; QR Hotspot</string>
+    <string name="turbo_engine_title">Hyper-Turbo Multi-Stream</string>
+    <string name="turbo_engine_desc">6x Parallel TCP Channels • 200–300+ MB/s Target</string>
+    <string name="tab_apps">Apps</string>
+    <string name="tab_videos">Videos</string>
+    <string name="tab_photos">Photos</string>
+    <string name="tab_folders">Folders</string>
+    <string name="tab_files">Files</string>
+    <string name="cd_ammar_brand_logo">Ammar Share brand logo</string>
+    <string name="cd_send_action">Send files to another phone</string>
+    <string name="cd_receive_action">Receive files from another phone</string>
+    <string name="cd_qr_code">Pairing QR code</string>
+    <string name="cd_back">Navigate back</string>
+</resources>
