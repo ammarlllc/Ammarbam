@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -65,6 +66,7 @@ import com.example.model.ShareCategory
 import com.example.model.ShareableItem
 import com.example.model.TransferRecord
 import com.example.ui.components.AppIcons
+import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CyberCyan
 import com.example.ui.theme.CyberMagenta
 import com.example.ui.theme.DeepCyan
@@ -73,6 +75,7 @@ import com.example.ui.theme.ElectricViolet
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.JetBrainsMonoFamily
 import com.example.ui.theme.NeonViolet
+import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.ObsidianCardBorder
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianSurfaceHigh
@@ -84,6 +87,7 @@ fun TransferHubScreen(
   turboMode: Boolean,
   queuedItems: List<ShareableItem>,
   recentHistory: List<TransferRecord>,
+  hasPublicStorageAccess: Boolean,
   benchmarkResult: BenchmarkResult?,
   isBenchmarkRunning: Boolean,
   onRenameDevice: (String) -> Unit,
@@ -91,8 +95,13 @@ fun TransferHubScreen(
   onOpenSendFlow: () -> Unit,
   onOpenReceiveFlow: () -> Unit,
   onOpenCategory: (ShareCategory) -> Unit,
+  onRequestPublicStorage: () -> Unit,
+  onOpenCredits: () -> Unit,
   onRunBenchmark: () -> Unit,
   onOpenHistoryTab: () -> Unit,
+  onInstallApkRecord: (TransferRecord) -> Unit,
+  onOpenRecord: (TransferRecord) -> Unit,
+  onShareRecord: (TransferRecord) -> Unit,
 ) {
   var showRenameDialog by remember { mutableStateOf(false) }
 
@@ -142,18 +151,18 @@ fun TransferHubScreen(
         ) {
           Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
             Image(
-              painter = painterResource(id = R.drawable.ammar_brand),
+              painter = painterResource(id = R.drawable.fast_share_logo),
               contentDescription = stringResource(R.string.cd_ammar_brand_logo),
               contentScale = ContentScale.Crop,
               modifier =
                 Modifier.size(48.dp)
                   .clip(CircleShape)
-                  .border(2.dp, ElectricViolet, CircleShape),
+                  .border(2.dp, CyberCyan, CircleShape),
             )
             Spacer(modifier = Modifier.width(12.dp))
             Column {
               Text(
-                text = "AMMAR SHARE",
+                text = "FAST SHARE",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.ExtraBold,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -184,27 +193,38 @@ fun TransferHubScreen(
             }
           }
 
-          Surface(
-            shape = RoundedCornerShape(50),
-            color = ObsidianSurfaceHigh,
-            modifier = Modifier.border(1.dp, ObsidianCardBorder, RoundedCornerShape(50)),
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
           ) {
-            Row(
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-              verticalAlignment = Alignment.CenterVertically,
+            Surface(
+              shape = RoundedCornerShape(50),
+              color = ObsidianSurfaceHigh,
+              modifier =
+                Modifier.clip(RoundedCornerShape(50))
+                  .border(1.dp, CyberCyan.copy(alpha = 0.7f), RoundedCornerShape(50))
+                  .clickable(onClick = onOpenCredits)
+                  .minimumInteractiveComponentSize()
+                  .testTag("open_credits_button"),
             ) {
-              Icon(
-                imageVector = AppIcons.Bolt,
-                contentDescription = null,
-                tint = if (turboMode) CyberCyan else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp),
-              )
-              Spacer(modifier = Modifier.width(4.dp))
-              Text(
-                text = if (turboMode) "6x TURBO" else "1x STD",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (turboMode) CyberCyan else MaterialTheme.colorScheme.onSurfaceVariant,
-              )
+              Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Icon(
+                  imageVector = AppIcons.Terminal,
+                  contentDescription = "Credits",
+                  tint = CyberCyan,
+                  modifier = Modifier.size(15.dp),
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                  text = "CREDITS",
+                  style = MaterialTheme.typography.labelSmall,
+                  fontWeight = FontWeight.Bold,
+                  color = CyberCyan,
+                )
+              }
             }
           }
         }
@@ -240,15 +260,97 @@ fun TransferHubScreen(
         }
       }
 
-      // Quick Share Categories Strip
+      // Public /storage/emulated/0/Ammarshare & MovieBox Storage Card
+      item {
+        Surface(
+          shape = RoundedCornerShape(18.dp),
+          color =
+            if (hasPublicStorageAccess) EmeraldSuccess.copy(alpha = 0.10f)
+            else AmberWarning.copy(alpha = 0.10f),
+          modifier =
+            Modifier.fillMaxWidth()
+              .border(
+                1.dp,
+                if (hasPublicStorageAccess) EmeraldSuccess.copy(alpha = 0.55f)
+                else AmberWarning.copy(alpha = 0.65f),
+                RoundedCornerShape(18.dp),
+              )
+              .testTag("public_storage_status_card"),
+        ) {
+          Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              modifier = Modifier.weight(1f),
+            ) {
+              Icon(
+                imageVector =
+                  if (hasPublicStorageAccess) Icons.Rounded.CheckCircle
+                  else AppIcons.StorageFolder,
+                contentDescription = null,
+                tint = if (hasPublicStorageAccess) EmeraldSuccess else AmberWarning,
+                modifier = Modifier.size(22.dp),
+              )
+              Spacer(modifier = Modifier.width(10.dp))
+              Column {
+                Text(
+                  text =
+                    if (hasPublicStorageAccess) "Public Folder Ready"
+                    else "Enable Public /Ammarshare Folder",
+                  style = MaterialTheme.typography.titleSmall,
+                  fontWeight = FontWeight.Bold,
+                  color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                  text = "/storage/emulated/0/Ammarshare • MovieBox & APK access",
+                  style = MaterialTheme.typography.labelSmall,
+                  fontFamily = JetBrainsMonoFamily,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  maxLines = 2,
+                )
+              }
+            }
+
+            if (!hasPublicStorageAccess) {
+              Spacer(modifier = Modifier.width(8.dp))
+              Button(
+                onClick = onRequestPublicStorage,
+                colors =
+                  ButtonDefaults.buttonColors(
+                    containerColor = AmberWarning,
+                    contentColor = ObsidianBg,
+                  ),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.minimumInteractiveComponentSize().testTag("grant_public_storage_btn"),
+              ) {
+                Text("Allow", fontWeight = FontWeight.Bold)
+              }
+            }
+          }
+        }
+      }
+
+      // Quick Share Categories Strip (including MovieBox)
       item {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
           Text(
-            text = "Quick Select & Share",
+            text = "Quick Select & Share (Unlimited)",
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
           )
           LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+              CategoryQuickCard(
+                label = "MovieBox",
+                icon = AppIcons.Movie,
+                onClick = { onOpenCategory(ShareCategory.VIDEOS) },
+                modifier = Modifier.testTag("quick_cat_moviebox"),
+              )
+            }
             items(ShareCategory.entries) { category ->
               val icon =
                 when (category) {
@@ -385,11 +487,11 @@ fun TransferHubScreen(
                   color = CyberCyan,
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Measuring 6-Stream TCP Speed...")
+                Text("Measuring 8-Stream TCP Speed...")
               } else {
                 Icon(AppIcons.Bolt, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Run 6-Stream TCP Speed Test")
+                Text("Run 8-Stream TCP Speed Test")
               }
             }
           }
@@ -443,7 +545,7 @@ fun TransferHubScreen(
               )
               Spacer(modifier = Modifier.height(4.dp))
               Text(
-                text = "Tap SEND to pick Apps, Videos, or Folders, or tap RECEIVE on the other phone.",
+                text = "Tap SEND to share Apps, MovieBox downloads, Videos or Folders, or tap RECEIVE for Auto-Hotspot.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
@@ -452,7 +554,62 @@ fun TransferHubScreen(
         }
       } else {
         items(recentHistory.take(4), key = { it.id }) { record ->
-          TransferRecordRow(record = record, onOpen = {}, onShare = {}, compact = true)
+          TransferRecordRow(
+            record = record,
+            onInstall = { onInstallApkRecord(record) },
+            onOpen = { onOpenRecord(record) },
+            onShare = { onShareRecord(record) },
+            compact = false,
+          )
+        }
+      }
+
+      // Developer Credits Highlight Footer
+      item {
+        Surface(
+          shape = RoundedCornerShape(18.dp),
+          color = ObsidianSurfaceHigh,
+          modifier =
+            Modifier.fillMaxWidth()
+              .clip(RoundedCornerShape(18.dp))
+              .border(
+                1.dp,
+                Brush.horizontalGradient(listOf(ElectricViolet, CyberCyan)),
+                RoundedCornerShape(18.dp),
+              )
+              .clickable(onClick = onOpenCredits)
+              .minimumInteractiveComponentSize()
+              .testTag("footer_credits_card"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Icon(AppIcons.Terminal, contentDescription = null, tint = CyberCyan)
+              Spacer(modifier = Modifier.width(10.dp))
+              Column {
+                Text(
+                  text = "CREDITS • AMMAR H4CK34",
+                  style = MaterialTheme.typography.labelLarge,
+                  fontFamily = JetBrainsMonoFamily,
+                  fontWeight = FontWeight.ExtraBold,
+                  color = CyberCyan,
+                )
+                Text(
+                  text = "Tap to view animated Dev Credits",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
+            }
+            Icon(
+              imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+              contentDescription = "Open Credits",
+              tint = NeonViolet,
+            )
+          }
         }
       }
     }

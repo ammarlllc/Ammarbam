@@ -5,9 +5,11 @@
     <!-- Network & Wi-Fi Direct / NSD Discovery -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Camera for scanning receiver QR code -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -27,10 +29,19 @@
         android:name="android.permission.ACCESS_COARSE_LOCATION"
         android:maxSdkVersion="32" />
 
-    <!-- Legacy external storage write for Android 9 and below only (API 29+ uses MediaStore.Downloads) -->
+    <!-- Legacy & public /storage/emulated/0/Ammarshare + MovieBox storage access -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
+        android:maxSdkVersion="29" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
+    <!-- Direct in-app APK & Split-APK installation -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Foreground Service for reliable high-speed background transfers -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

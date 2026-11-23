@@ -1,0 +1,86 @@
+name: Build Ammar Share APK & AAB
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Signed APK & AAB
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept SDK licenses & install Android 36.1
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-36.1" "build-tools;36.0.0" || true
+
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Prepare debug keystore and build APK & AAB
+        run: |
+          if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
+          keytool -genkeypair -noprompt \
+            -keystore /tmp/upload.jks \
+            -alias upload \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=Ammar Share,O=Ammar App Software"
+
+          export KEYSTORE_PATH=/tmp/upload.jks
+          export STORE_PASSWORD=android
+          export KEY_PASSWORD=android
+
+          gradle :app:testDebugUnitTest :app:assembleRelease :app:bundleRelease --no-daemon
+
+          mkdir -p release-out
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          "$APKSIGNER" sign \
+            --ks debug.keystore \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out release-out/AmmarShare.apk \
+            app/build/outputs/apk/release/app-release.apk
+          rm -f release-out/AmmarShare.apk.idsig
+          cp app/build/outputs/bundle/release/app-release.aab release-out/AmmarShare.aab
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AmmarShare-APK-AAB
+          path: |
+            release-out/AmmarShare.apk
+            release-out/AmmarShare.aab
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v1.0.${{ github.run_number }}"
+          gh release create "$TAG" \
+            release-out/AmmarShare.apk \
+            release-out/AmmarShare.aab \
+            --title "Ammar Share $TAG" \
+            --notes "Automated build of Ammar Share APK (mobile install) and AAB."
+        continue-on-error: true

@@ -16,13 +16,39 @@ data class InstalledAppInfo(
   val versionName: String,
   val apkPath: String,
   val sizeBytes: Long,
+  val splitPaths: List<String> = emptyList(),
+  val extraDataPaths: List<String> = emptyList(),
+  val totalBundleBytes: Long = sizeBytes,
 ) {
-  val exportFileName: String
+  val safeAppSlug: String
     get() {
-      val safeName = appName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+      val safeName = appName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { packageName }
       val safeVer = versionName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-      return "${safeName}_v${safeVer}.apk"
+      return "${safeName}_v${safeVer}"
     }
+
+  val exportFileName: String
+    get() = "${safeAppSlug}.apk"
+
+  val hasSplitsOrData: Boolean
+    get() = splitPaths.isNotEmpty() || extraDataPaths.isNotEmpty()
+}
+
+data class LocalMediaEntry(
+  val id: String,
+  val filePath: String,
+  val displayName: String,
+  val sizeBytes: Long,
+  val mimeType: String,
+  val category: ShareCategory,
+  val sourceTag: String,
+  val modifiedMs: Long,
+)
+
+sealed class InstallResult {
+  data object Started : InstallResult()
+  data object NeedsPermission : InstallResult()
+  data class Failed(val reason: String) : InstallResult()
 }
 
 data class ShareableItem(

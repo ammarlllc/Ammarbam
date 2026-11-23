@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,10 +35,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,12 +55,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -65,17 +74,23 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.model.Formatters
 import com.example.model.InstalledAppInfo
+import com.example.model.LocalMediaEntry
 import com.example.model.ShareCategory
 import com.example.model.ShareableItem
 import com.example.ui.components.AppIcons
+import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CyberCyan
 import com.example.ui.theme.CyberMagenta
 import com.example.ui.theme.ElectricViolet
+import com.example.ui.theme.EmeraldSuccess
+import com.example.ui.theme.JetBrainsMonoFamily
 import com.example.ui.theme.NeonViolet
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.ObsidianCardBorder
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianSurfaceHigh
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SelectContentScreen(
@@ -85,24 +100,34 @@ fun SelectContentScreen(
   appsLoading: Boolean,
   appSearchQuery: String,
   onSearchQueryChange: (String) -> Unit,
+  localMedia: List<LocalMediaEntry>,
+  localMediaLoading: Boolean,
+  hasPublicStorageAccess: Boolean,
   queuedItems: List<ShareableItem>,
   onToggleApp: (InstalledAppInfo) -> Unit,
+  onToggleLocalMedia: (LocalMediaEntry) -> Unit,
+  onRefreshLocalMedia: () -> Unit,
+  onRequestPublicStorage: () -> Unit,
+  onInstallLocalApk: (String) -> Unit,
   onAddMediaOrFiles: (List<Uri>, ShareCategory) -> Unit,
   onAddFolder: (Uri?) -> Unit,
   onRemoveQueueItem: (String) -> Unit,
   onClearQueue: () -> Unit,
   onProceedToSendRadar: () -> Unit,
 ) {
+  val context = LocalContext.current
+
+  // Removed the artificial maxItems = 50 limit; uses system unlimited max + SAF multi-select
   val videoPicker =
     rememberLauncherForActivityResult(
-      contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
+      contract = ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
       if (uris.isNotEmpty()) onAddMediaOrFiles(uris, ShareCategory.VIDEOS)
     }
 
   val photoPicker =
     rememberLauncherForActivityResult(
-      contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
+      contract = ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
       if (uris.isNotEmpty()) onAddMediaOrFiles(uris, ShareCategory.PHOTOS)
     }
@@ -122,8 +147,16 @@ fun SelectContentScreen(
       if (uris.isNotEmpty()) onAddMediaOrFiles(uris, ShareCategory.VIDEOS)
     }
 
-  val queuedIds = remember(queuedItems) { queuedItems.map { it.id }.toHashSet() }
+  val safPhotoPicker =
+    rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+      if (uris.isNotEmpty()) onAddMediaOrFiles(uris, ShareCategory.PHOTOS)
+    }
+
+  val queuedPackages = remember(queuedItems) { queuedItems.mapNotNull { it.packageName }.toHashSet() }
+  val queuedPaths = remember(queuedItems) { queuedItems.mapNotNull { it.localFilePath }.toHashSet() }
   val totalQueueBytes = remember(queuedItems) { queuedItems.sumOf { it.sizeBytes } }
+
+  var mediaSourceFilter by remember { mutableStateOf("All") }
 
   Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     Column(modifier = Modifier.fillMaxSize().widthIn(max = 680.dp)) {
@@ -170,7 +203,7 @@ fun SelectContentScreen(
                 value = appSearchQuery,
                 onValueChange = onSearchQueryChange,
                 singleLine = true,
-                placeholder = { Text("Search ${installedApps.size} installed apps...") },
+                placeholder = { Text("Search ${installedApps.size} installed apps (no limit)...") },
                 leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
                 trailingIcon = {
                   if (appSearchQuery.isNotEmpty()) {
@@ -186,17 +219,34 @@ fun SelectContentScreen(
                     .testTag("app_search_input"),
               )
 
+              Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = ElectricViolet.copy(alpha = 0.14f),
+                modifier =
+                  Modifier.fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .border(1.dp, ElectricViolet.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
+              ) {
+                Text(
+                  text =
+                    "Includes Base APK + Split APKs + accessible OBB data. Note: Android OS protects private /data/data without root.",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = CyberCyan,
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+              }
+
               if (appsLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                   CircularProgressIndicator(color = CyberCyan)
                 }
               } else {
                 LazyColumn(
-                  contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 104.dp),
+                  contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 104.dp),
                   verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                   items(filtered, key = { it.packageName }) { app ->
-                    val isSelected = queuedIds.contains("app_${app.packageName}")
+                    val isSelected = queuedPackages.contains(app.packageName)
                     InstalledAppRow(
                       app = app,
                       selected = isSelected,
@@ -210,20 +260,44 @@ fun SelectContentScreen(
 
           ShareCategory.VIDEOS -> {
             val videoItems = queuedItems.filter { it.category == ShareCategory.VIDEOS }
-            CategoryPickerList(
-              title = "Share Videos at Full Quality",
+            CategoryPickerWithMovieBoxList(
+              title = "Videos & MovieBox Downloads",
               description =
-                "Select one or more videos using Android Photo Picker or Browse Files (no storage permissions needed).",
-              primaryActionText = "Pick Videos (Photo Picker)",
+                "Select unlimited videos, or pick directly from MovieBox, Downloads, and /storage/emulated/0/Ammarshare below.",
+              primaryActionText = "Pick Videos (Unlimited)",
               primaryIcon = AppIcons.VideoLibrary,
               onPrimaryClick = {
-                videoPicker.launch(
-                  PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                )
+                try {
+                  videoPicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                  )
+                } catch (_: Throwable) {
+                  try {
+                    safVideoPicker.launch(arrayOf("video/*"))
+                  } catch (_: Throwable) {
+                    Toast.makeText(context, "Unable to open video picker", Toast.LENGTH_SHORT).show()
+                  }
+                }
               },
-              secondaryActionText = "Browse Video Files (SAF)",
-              onSecondaryClick = { safVideoPicker.launch(arrayOf("video/*")) },
+              secondaryActionText = "Browse MovieBox / Storage (SAF Unlimited)",
+              onSecondaryClick = {
+                try {
+                  safVideoPicker.launch(arrayOf("video/*", "application/octet-stream"))
+                } catch (_: Throwable) {
+                  Toast.makeText(context, "Unable to open file browser", Toast.LENGTH_SHORT).show()
+                }
+              },
               items = videoItems,
+              localEntries = localMedia,
+              localLoading = localMediaLoading,
+              hasPublicStorageAccess = hasPublicStorageAccess,
+              mediaSourceFilter = mediaSourceFilter,
+              onSelectSourceFilter = { mediaSourceFilter = it },
+              queuedPaths = queuedPaths,
+              onToggleLocalMedia = onToggleLocalMedia,
+              onRefreshLocalMedia = onRefreshLocalMedia,
+              onRequestPublicStorage = onRequestPublicStorage,
+              onInstallLocalApk = onInstallLocalApk,
               onRemoveItem = onRemoveQueueItem,
               primaryTestTag = "pick_videos_button",
             )
@@ -231,54 +305,110 @@ fun SelectContentScreen(
 
           ShareCategory.PHOTOS -> {
             val photoItems = queuedItems.filter { it.category == ShareCategory.PHOTOS }
-            CategoryPickerList(
-              title = "Share Photos & Albums",
+            CategoryPickerWithMovieBoxList(
+              title = "Share Photos & Albums (Unlimited)",
               description =
-                "Select high-resolution photos with zero-permission Android Photo Picker.",
-              primaryActionText = "Pick Photos (Photo Picker)",
+                "Select high-resolution photos with zero limit via Android Photo Picker or SAF.",
+              primaryActionText = "Pick Photos (Unlimited)",
               primaryIcon = AppIcons.PhotoLibrary,
               onPrimaryClick = {
-                photoPicker.launch(
-                  PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                )
+                try {
+                  photoPicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                  )
+                } catch (_: Throwable) {
+                  try {
+                    safPhotoPicker.launch(arrayOf("image/*"))
+                  } catch (_: Throwable) {
+                    Toast.makeText(context, "Unable to open photo picker", Toast.LENGTH_SHORT).show()
+                  }
+                }
               },
-              secondaryActionText = null,
-              onSecondaryClick = null,
+              secondaryActionText = "Browse Image Files (SAF Unlimited)",
+              onSecondaryClick = {
+                try {
+                  safPhotoPicker.launch(arrayOf("image/*"))
+                } catch (_: Throwable) {}
+              },
               items = photoItems,
+              localEntries = emptyList(),
+              localLoading = false,
+              hasPublicStorageAccess = hasPublicStorageAccess,
+              mediaSourceFilter = mediaSourceFilter,
+              onSelectSourceFilter = { mediaSourceFilter = it },
+              queuedPaths = queuedPaths,
+              onToggleLocalMedia = onToggleLocalMedia,
+              onRefreshLocalMedia = onRefreshLocalMedia,
+              onRequestPublicStorage = onRequestPublicStorage,
+              onInstallLocalApk = onInstallLocalApk,
               onRemoveItem = onRemoveQueueItem,
               primaryTestTag = "pick_photos_button",
+              showLocalSection = false,
             )
           }
 
           ShareCategory.FOLDERS -> {
             val folderItems = queuedItems.filter { it.category == ShareCategory.FOLDERS }
-            CategoryPickerList(
-              title = "Send Entire Folders",
+            CategoryPickerWithMovieBoxList(
+              title = "Send Entire Folders (e.g. MovieBox / OBB)",
               description =
-                "Pick any folder on your phone. Subfolders and all nested files are preserved on the receiving phone.",
+                "Pick any folder on your phone (no file count limit). Subfolders and nested files are preserved in /storage/emulated/0/Ammarshare.",
               primaryActionText = "Pick Folder (SAF Tree)",
               primaryIcon = AppIcons.CreateNewFolder,
-              onPrimaryClick = { folderPicker.launch(null) },
+              onPrimaryClick = {
+                try {
+                  folderPicker.launch(null)
+                } catch (_: Throwable) {
+                  Toast.makeText(context, "Unable to open folder picker", Toast.LENGTH_SHORT).show()
+                }
+              },
               secondaryActionText = null,
               onSecondaryClick = null,
               items = folderItems,
+              localEntries = emptyList(),
+              localLoading = false,
+              hasPublicStorageAccess = hasPublicStorageAccess,
+              mediaSourceFilter = mediaSourceFilter,
+              onSelectSourceFilter = { mediaSourceFilter = it },
+              queuedPaths = queuedPaths,
+              onToggleLocalMedia = onToggleLocalMedia,
+              onRefreshLocalMedia = onRefreshLocalMedia,
+              onRequestPublicStorage = onRequestPublicStorage,
+              onInstallLocalApk = onInstallLocalApk,
               onRemoveItem = onRemoveQueueItem,
               primaryTestTag = "pick_folder_button",
+              showLocalSection = false,
             )
           }
 
           ShareCategory.FILES -> {
             val fileItems = queuedItems.filter { it.category == ShareCategory.FILES }
-            CategoryPickerList(
-              title = "Send APKs, ZIPs, Audio & Docs",
+            CategoryPickerWithMovieBoxList(
+              title = "Send APKs, ZIPs, MovieBox & Public Files",
               description =
-                "Select any document, archive, APK, or music file from device storage or Drive.",
-              primaryActionText = "Pick Any Files",
+                "Select unlimited files, or share/install items from MovieBox, Downloads, and /storage/emulated/0/Ammarshare below.",
+              primaryActionText = "Pick Any Files (Unlimited)",
               primaryIcon = AppIcons.InsertDriveFile,
-              onPrimaryClick = { filePicker.launch(arrayOf("*/*")) },
+              onPrimaryClick = {
+                try {
+                  filePicker.launch(arrayOf("*/*"))
+                } catch (_: Throwable) {
+                  Toast.makeText(context, "Unable to open file picker", Toast.LENGTH_SHORT).show()
+                }
+              },
               secondaryActionText = null,
               onSecondaryClick = null,
               items = fileItems,
+              localEntries = localMedia,
+              localLoading = localMediaLoading,
+              hasPublicStorageAccess = hasPublicStorageAccess,
+              mediaSourceFilter = mediaSourceFilter,
+              onSelectSourceFilter = { mediaSourceFilter = it },
+              queuedPaths = queuedPaths,
+              onToggleLocalMedia = onToggleLocalMedia,
+              onRefreshLocalMedia = onRefreshLocalMedia,
+              onRequestPublicStorage = onRequestPublicStorage,
+              onInstallLocalApk = onInstallLocalApk,
               onRemoveItem = onRemoveQueueItem,
               primaryTestTag = "pick_files_button",
             )
@@ -363,14 +493,17 @@ private fun InstalledAppRow(
   onClick: () -> Unit,
 ) {
   val context = LocalContext.current
-  val iconBitmap =
-    remember(app.packageName) {
-      try {
-        val drawable = context.packageManager.getApplicationIcon(app.packageName)
-        drawableToBitmap(drawable)?.asImageBitmap()
-      } catch (_: Exception) {
-        null
-      }
+  val iconBitmap by
+    produceState<ImageBitmap?>(initialValue = null, app.packageName) {
+      value =
+        withContext(Dispatchers.Default) {
+          try {
+            val drawable = context.packageManager.getApplicationIcon(app.packageName)
+            drawableToBitmap(drawable)?.asImageBitmap()
+          } catch (_: Throwable) {
+            null
+          }
+        }
     }
 
   Surface(
@@ -394,7 +527,7 @@ private fun InstalledAppRow(
     ) {
       if (iconBitmap != null) {
         Image(
-          bitmap = iconBitmap,
+          bitmap = iconBitmap!!,
           contentDescription = app.appName,
           modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)),
         )
@@ -420,11 +553,20 @@ private fun InstalledAppRow(
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
+        val bundleLabel =
+          buildString {
+            append("v${app.versionName} • ${Formatters.formatBytes(app.totalBundleBytes)}")
+            if (app.splitPaths.isNotEmpty()) append(" • +${app.splitPaths.size} splits")
+            if (app.extraDataPaths.isNotEmpty()) append(" • +OBB")
+          }
         Text(
-          text = "v${app.versionName} • ${Formatters.formatBytes(app.sizeBytes)}",
+          text = bundleLabel,
           style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          color =
+            if (app.hasSplitsOrData) CyberCyan
+            else MaterialTheme.colorScheme.onSurfaceVariant,
           maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
         )
       }
 
@@ -439,7 +581,7 @@ private fun InstalledAppRow(
 }
 
 @Composable
-private fun CategoryPickerList(
+private fun CategoryPickerWithMovieBoxList(
   title: String,
   description: String,
   primaryActionText: String,
@@ -448,9 +590,26 @@ private fun CategoryPickerList(
   secondaryActionText: String?,
   onSecondaryClick: (() -> Unit)?,
   items: List<ShareableItem>,
+  localEntries: List<LocalMediaEntry>,
+  localLoading: Boolean,
+  hasPublicStorageAccess: Boolean,
+  mediaSourceFilter: String,
+  onSelectSourceFilter: (String) -> Unit,
+  queuedPaths: HashSet<String>,
+  onToggleLocalMedia: (LocalMediaEntry) -> Unit,
+  onRefreshLocalMedia: () -> Unit,
+  onRequestPublicStorage: () -> Unit,
+  onInstallLocalApk: (String) -> Unit,
   onRemoveItem: (String) -> Unit,
   primaryTestTag: String,
+  showLocalSection: Boolean = true,
 ) {
+  val filteredLocal =
+    remember(localEntries, mediaSourceFilter) {
+      if (mediaSourceFilter == "All") localEntries
+      else localEntries.filter { it.sourceTag == mediaSourceFilter }
+    }
+
   LazyColumn(
     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 104.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -576,16 +735,196 @@ private fun CategoryPickerList(
         }
       }
     }
+
+    if (showLocalSection) {
+      item {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text(
+            text = "MovieBox & Public Folders",
+            style = MaterialTheme.typography.titleMedium,
+            color = CyberCyan,
+          )
+          IconButton(onClick = onRefreshLocalMedia) {
+            Icon(Icons.Rounded.Refresh, contentDescription = "Rescan folders", tint = NeonViolet)
+          }
+        }
+      }
+
+      if (!hasPublicStorageAccess) {
+        item {
+          Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = AmberWarning.copy(alpha = 0.12f),
+            modifier =
+              Modifier.fillMaxWidth()
+                .border(1.dp, AmberWarning.copy(alpha = 0.6f), RoundedCornerShape(16.dp)),
+          ) {
+            Column(
+              modifier = Modifier.padding(14.dp),
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Text(
+                text = "Allow All Files Access to auto-list MovieBox & /storage/emulated/0/Ammarshare",
+                style = MaterialTheme.typography.bodyMedium,
+                color = AmberWarning,
+              )
+              Button(
+                onClick = onRequestPublicStorage,
+                colors =
+                  ButtonDefaults.buttonColors(
+                    containerColor = AmberWarning,
+                    contentColor = ObsidianBg,
+                  ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize(),
+              ) {
+                Text("Unlock MovieBox & Public Storage", fontWeight = FontWeight.Bold)
+              }
+            }
+          }
+        }
+      }
+
+      item {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          val filters = listOf("All", "MovieBox", "Ammarshare", "Downloads", "Movies")
+          items(filters) { f ->
+            FilterChip(
+              selected = mediaSourceFilter == f,
+              onClick = { onSelectSourceFilter(f) },
+              label = { Text(f) },
+              colors =
+                FilterChipDefaults.filterChipColors(
+                  selectedContainerColor = ElectricViolet.copy(alpha = 0.28f),
+                  selectedLabelColor = CyberCyan,
+                ),
+            )
+          }
+        }
+      }
+
+      if (localLoading) {
+        item {
+          Box(
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
+            contentAlignment = Alignment.Center,
+          ) {
+            CircularProgressIndicator(color = CyberCyan)
+          }
+        }
+      } else if (filteredLocal.isEmpty()) {
+        item {
+          Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = ObsidianSurface,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text(
+              text =
+                "No files found in $mediaSourceFilter yet. Download in MovieBox or receive files into /storage/emulated/0/Ammarshare, or use Browse SAF above.",
+              style = MaterialTheme.typography.bodyMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.padding(16.dp),
+            )
+          }
+        }
+      } else {
+        items(filteredLocal, key = { it.id }) { entry ->
+          val isQueued = queuedPaths.contains(entry.filePath)
+          val isApk = entry.displayName.endsWith(".apk", ignoreCase = true)
+          Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = if (isQueued) ElectricViolet.copy(alpha = 0.2f) else ObsidianSurfaceHigh,
+            modifier =
+              Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .border(
+                  1.dp,
+                  if (isQueued) CyberCyan else ObsidianCardBorder.copy(alpha = 0.7f),
+                  RoundedCornerShape(14.dp),
+                )
+                .clickable { onToggleLocalMedia(entry) }
+                .minimumInteractiveComponentSize(),
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Box(
+                modifier =
+                  Modifier.size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                      if (entry.sourceTag == "MovieBox") CyberMagenta.copy(alpha = 0.2f)
+                      else CyberCyan.copy(alpha = 0.16f)
+                    ),
+                contentAlignment = Alignment.Center,
+              ) {
+                Icon(
+                  imageVector =
+                    when {
+                      entry.sourceTag == "MovieBox" -> AppIcons.Movie
+                      isApk -> AppIcons.Apps
+                      entry.category == ShareCategory.VIDEOS -> AppIcons.VideoLibrary
+                      else -> AppIcons.InsertDriveFile
+                    },
+                  contentDescription = null,
+                  tint = if (entry.sourceTag == "MovieBox") CyberMagenta else CyberCyan,
+                )
+              }
+              Spacer(modifier = Modifier.width(10.dp))
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = entry.displayName,
+                  style = MaterialTheme.typography.titleSmall,
+                  color = MaterialTheme.colorScheme.onSurface,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                  text = "${entry.sourceTag} • ${Formatters.formatBytes(entry.sizeBytes)}",
+                  style = MaterialTheme.typography.labelSmall,
+                  fontFamily = JetBrainsMonoFamily,
+                  color =
+                    if (entry.sourceTag == "Ammarshare") EmeraldSuccess
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                  maxLines = 1,
+                )
+              }
+              if (isApk) {
+                TextButton(onClick = { onInstallLocalApk(entry.filePath) }) {
+                  Text("Install", color = EmeraldSuccess, fontWeight = FontWeight.Bold)
+                }
+              }
+              Icon(
+                imageVector =
+                  if (isQueued) Icons.Rounded.CheckCircle else AppIcons.RadioButtonUnchecked,
+                contentDescription = if (isQueued) "Queued" else "Tap to queue",
+                tint = if (isQueued) CyberCyan else MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
+          }
+        }
+      }
+    }
   }
 }
 
 private fun drawableToBitmap(drawable: Drawable): Bitmap? {
-  if (drawable is BitmapDrawable && drawable.bitmap != null) return drawable.bitmap
-  val width = drawable.intrinsicWidth.coerceIn(48, 144)
-  val height = drawable.intrinsicHeight.coerceIn(48, 144)
-  val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-  val canvas = Canvas(bitmap)
-  drawable.setBounds(0, 0, canvas.width, canvas.height)
-  drawable.draw(canvas)
-  return bitmap
+  return try {
+    if (drawable is BitmapDrawable && drawable.bitmap != null) return drawable.bitmap
+    val width = drawable.intrinsicWidth.coerceIn(48, 96)
+    val height = drawable.intrinsicHeight.coerceIn(48, 96)
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    drawable.setBounds(0, 0, canvas.width, canvas.height)
+    drawable.draw(canvas)
+    bitmap
+  } catch (_: Throwable) {
+    null
+  }
 }

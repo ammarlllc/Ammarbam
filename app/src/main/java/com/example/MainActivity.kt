@@ -1,10 +1,15 @@
 package com.example
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -32,6 +37,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,14 +46,20 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.model.ShareCategory
 import com.example.ui.AmmarShareViewModel
 import com.example.ui.components.AppIcons
+import com.example.ui.screens.CreditsOverlay
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.ReceiveRadarScreen
 import com.example.ui.screens.SelectContentScreen
@@ -87,16 +99,26 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AmmarShareRoot(vm: AmmarShareViewModel = viewModel()) {
+  val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
+
   val showSplash by vm.showSplash.collectAsStateWithLifecycle()
+  val showCredits by vm.showCredits.collectAsStateWithLifecycle()
   val deviceName by vm.deviceName.collectAsStateWithLifecycle()
   val turboMode by vm.turboMode.collectAsStateWithLifecycle()
   val installedApps by vm.installedApps.collectAsStateWithLifecycle()
   val appsLoading by vm.appsLoading.collectAsStateWithLifecycle()
   val appSearchQuery by vm.appSearchQuery.collectAsStateWithLifecycle()
+  val localMedia by vm.localMedia.collectAsStateWithLifecycle()
+  val localMediaLoading by vm.localMediaLoading.collectAsStateWithLifecycle()
+  val hasPublicStorageAccess by vm.hasPublicStorageAccess.collectAsStateWithLifecycle()
   val queuedItems by vm.selectedQueue.collectAsStateWithLifecycle()
   val discoveredDevices by vm.discoveredDevices.collectAsStateWithLifecycle()
   val isScanning by vm.isScanning.collectAsStateWithLifecycle()
   val wifiDirectStatus by vm.wifiDirectStatus.collectAsStateWithLifecycle()
+  val readiness by vm.readiness.collectAsStateWithLifecycle()
+  val hotspotInfo by vm.hotspotInfo.collectAsStateWithLifecycle()
+  val isStartingHotspot by vm.isStartingHotspot.collectAsStateWithLifecycle()
   val receiverInfo by vm.receiverInfo.collectAsStateWithLifecycle()
   val transferProgress by vm.transferProgress.collectAsStateWithLifecycle()
   val history by vm.history.collectAsStateWithLifecycle()
@@ -107,6 +129,46 @@ fun AmmarShareRoot(vm: AmmarShareViewModel = viewModel()) {
   var currentTab by rememberSaveable { mutableStateOf(MainTab.TRANSFER) }
   var selectedCategory by rememberSaveable { mutableStateOf(ShareCategory.APPS) }
   var activeSubFlow by rememberSaveable { mutableStateOf(SubFlow.NONE) }
+
+  val legacyStoragePermLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+      vm.refreshReadiness()
+      vm.refreshLocalMedia()
+    }
+
+  val requestPublicStorageAccess = {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      vm.openPublicStorageSettings()
+    } else {
+      val needsWrite =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+          PackageManager.PERMISSION_GRANTED
+      if (needsWrite) {
+        try {
+          legacyStoragePermLauncher.launch(
+            arrayOf(
+              Manifest.permission.READ_EXTERNAL_STORAGE,
+              Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            )
+          )
+        } catch (_: Throwable) {}
+      } else {
+        vm.refreshReadiness()
+        vm.refreshLocalMedia()
+      }
+    }
+  }
+
+  DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) {
+        vm.refreshReadiness()
+        vm.refreshLocalMedia()
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
 
   val snackbarHostState = remember { SnackbarHostState() }
   LaunchedEffect(statusBanner) {
@@ -125,6 +187,8 @@ fun AmmarShareRoot(vm: AmmarShareViewModel = viewModel()) {
           discoveredDevices = discoveredDevices,
           isScanning = isScanning,
           wifiDirectStatus = wifiDirectStatus,
+          readiness = readiness,
+          onRefreshReadiness = { vm.refreshReadiness() },
           onStartRadar = { withP2p -> vm.startSenderRadar(withP2p) },
           onStopRadar = { vm.stopSenderRadar() },
           onSelectDevice = { dev -> vm.connectAndSendToDevice(dev) },
@@ -137,8 +201,14 @@ fun AmmarShareRoot(vm: AmmarShareViewModel = viewModel()) {
         ReceiveRadarScreen(
           deviceName = deviceName,
           receiverInfo = receiverInfo,
+          readiness = readiness,
+          hotspotInfo = hotspotInfo,
+          isStartingHotspot = isStartingHotspot,
+          onRefreshReadiness = { vm.refreshReadiness() },
+          onEnsureAutoHotspot = { vm.ensureAutoHotspotOnResume() },
           onStartReceive = { vm.startReceiveMode() },
           onStopReceive = { vm.stopReceiveMode() },
+          onToggleHotspot = { vm.toggleReceiveHotspot() },
           onBack = { activeSubFlow = SubFlow.NONE },
         )
       }
@@ -242,6 +312,7 @@ fun AmmarShareRoot(vm: AmmarShareViewModel = viewModel()) {
                       turboMode = turboMode,
                       queuedItems = queuedItems,
                       recentHistory = history,
+                      hasPublicStorageAccess = hasPublicStorageAccess,
                       benchmarkResult = benchmarkResult,
                       isBenchmarkRunning = isBenchmarkRunning,
                       onRenameDevice = { vm.setDeviceName(it) },
@@ -258,8 +329,13 @@ fun AmmarShareRoot(vm: AmmarShareViewModel = viewModel()) {
                         selectedCategory = cat
                         currentTab = MainTab.SELECT
                       },
+                      onRequestPublicStorage = requestPublicStorageAccess,
+                      onOpenCredits = { vm.openCredits() },
                       onRunBenchmark = { vm.runTurboBenchmark() },
                       onOpenHistoryTab = { currentTab = MainTab.HISTORY },
+                      onInstallApkRecord = { vm.installHistoryApk(it) },
+                      onOpenRecord = { vm.openHistoryRecord(it) },
+                      onShareRecord = { vm.shareHistoryRecord(it) },
                     )
                   }
 
@@ -271,8 +347,15 @@ fun AmmarShareRoot(vm: AmmarShareViewModel = viewModel()) {
                       appsLoading = appsLoading,
                       appSearchQuery = appSearchQuery,
                       onSearchQueryChange = { vm.updateAppSearch(it) },
+                      localMedia = localMedia,
+                      localMediaLoading = localMediaLoading,
+                      hasPublicStorageAccess = hasPublicStorageAccess,
                       queuedItems = queuedItems,
                       onToggleApp = { vm.toggleAppSelection(it) },
+                      onToggleLocalMedia = { vm.toggleLocalMediaSelection(it) },
+                      onRefreshLocalMedia = { vm.refreshLocalMedia() },
+                      onRequestPublicStorage = requestPublicStorageAccess,
+                      onInstallLocalApk = { vm.installLocalApk(it) },
                       onAddMediaOrFiles = { uris, cat -> vm.addPickedMediaOrFiles(uris, cat) },
                       onAddFolder = { uri -> vm.addPickedFolder(uri) },
                       onRemoveQueueItem = { id -> vm.removeQueueItem(id) },
@@ -284,6 +367,9 @@ fun AmmarShareRoot(vm: AmmarShareViewModel = viewModel()) {
                   MainTab.HISTORY -> {
                     HistoryScreen(
                       records = history,
+                      hasPublicStorageAccess = hasPublicStorageAccess,
+                      onRequestPublicStorage = requestPublicStorageAccess,
+                      onInstallApk = { vm.installHistoryApk(it) },
                       onOpenRecord = { vm.openHistoryRecord(it) },
                       onShareRecord = { vm.shareHistoryRecord(it) },
                       onClearHistory = { vm.clearHistory() },
@@ -300,11 +386,22 @@ fun AmmarShareRoot(vm: AmmarShareViewModel = viewModel()) {
     // Active Transfer Speedometer Overlay
     TransferProgressOverlay(
       state = transferProgress,
+      recentHistory = history,
+      onInstallApk = { vm.installHistoryApk(it) },
       onCancel = { vm.cancelTransfer() },
       onDone = { vm.dismissTransferSummary() },
     )
 
-    // Startup Branded Splash Screen ("MADE WITH AMMAR APP SOFTWARE")
+    // Animated Developer Credits Overlay ("CREDITS", Dev Icon, "AMMAR H4CK34")
+    AnimatedVisibility(
+      visible = showCredits,
+      enter = fadeIn(),
+      exit = fadeOut(),
+    ) {
+      CreditsOverlay(onDismiss = { vm.closeCredits() })
+    }
+
+    // Startup Branded Splash Screen ("FAST SHARE" + Animated Credits)
     AnimatedVisibility(
       visible = showSplash,
       enter = fadeIn(),

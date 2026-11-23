@@ -1,8 +1,11 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -45,6 +48,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -86,6 +90,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
 import com.example.model.DiscoveredDevice
 import com.example.model.DiscoverySource
@@ -93,11 +100,15 @@ import com.example.model.Formatters
 import com.example.model.ShareableItem
 import com.example.model.TransferDirection
 import com.example.model.TransferProgressState
+import com.example.model.TransferRecord
 import com.example.model.TransferStatus
+import com.example.transfer.DeviceReadiness
+import com.example.transfer.LocalHotspotInfo
 import com.example.transfer.TransferEngine
 import com.example.ui.ReceiverSessionInfo
 import com.example.ui.components.AppIcons
 import com.example.ui.components.QrScannerDialog
+import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CrimsonError
 import com.example.ui.theme.CyberCyan
 import com.example.ui.theme.CyberMagenta
@@ -112,6 +123,141 @@ import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianSurfaceHigh
 import com.example.ui.theme.ObsidianSurfaceHighest
 
+private fun nearbyWifiPermissionName(): String =
+  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    Manifest.permission.NEARBY_WIFI_DEVICES
+  } else {
+    Manifest.permission.ACCESS_FINE_LOCATION
+  }
+
+private fun openLocationSettings(context: Context) {
+  try {
+    context.startActivity(
+      Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    )
+  } catch (_: Exception) {
+    Toast.makeText(context, "Open Settings > Location and turn it ON", Toast.LENGTH_LONG).show()
+  }
+}
+
+private fun openWifiSettings(context: Context) {
+  try {
+    val action =
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Settings.Panel.ACTION_WIFI
+      else Settings.ACTION_WIFI_SETTINGS
+    context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+  } catch (_: Exception) {
+    try {
+      context.startActivity(
+        Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      )
+    } catch (_: Exception) {
+      Toast.makeText(context, "Open Settings > Wi-Fi and turn it ON", Toast.LENGTH_LONG).show()
+    }
+  }
+}
+
+@Composable
+private fun ResumeReadinessEffect(onResume: () -> Unit) {
+  val lifecycleOwner = LocalLifecycleOwner.current
+  DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) {
+        onResume()
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
+}
+
+@Composable
+private fun DeviceReadinessCard(
+  readiness: DeviceReadiness,
+  onRequestNearbyPermission: () -> Unit,
+) {
+  if (readiness.isHotspotAndP2pReady) return
+
+  val context = LocalContext.current
+  Surface(
+    shape = RoundedCornerShape(20.dp),
+    color = AmberWarning.copy(alpha = 0.12f),
+    modifier =
+      Modifier.fillMaxWidth()
+        .border(1.5.dp, AmberWarning.copy(alpha = 0.7f), RoundedCornerShape(20.dp))
+        .testTag("device_readiness_card"),
+  ) {
+    Column(
+      modifier = Modifier.padding(16.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Icon(AppIcons.ErrorOutline, contentDescription = null, tint = AmberWarning)
+        Text(
+          text = "Turn On Location & Wi-Fi for Fast Transfer",
+          style = MaterialTheme.typography.titleMedium,
+          color = AmberWarning,
+          fontWeight = FontWeight.Bold,
+        )
+      }
+
+      if (!readiness.locationEnabled) {
+        ReadinessActionRow(
+          label = "Location Services is OFF — Android requires Location ON for Hotspot & Wi-Fi Direct",
+          buttonText = "Turn On Location",
+          tag = "turn_on_location_button",
+          onClick = { openLocationSettings(context) },
+        )
+      }
+
+      if (!readiness.wifiEnabled) {
+        ReadinessActionRow(
+          label = "Wi-Fi is OFF — turn ON Wi-Fi for direct high-speed pairing",
+          buttonText = "Turn On Wi-Fi",
+          tag = "turn_on_wifi_button",
+          onClick = { openWifiSettings(context) },
+        )
+      }
+
+      if (!readiness.hasNearbyPermission) {
+        ReadinessActionRow(
+          label = "Nearby Wi-Fi permission is needed for radar & Fast Share Auto-Hotspot",
+          buttonText = "Grant Permission",
+          tag = "grant_nearby_permission_button",
+          onClick = onRequestNearbyPermission,
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun ReadinessActionRow(
+  label: String,
+  buttonText: String,
+  tag: String,
+  onClick: () -> Unit,
+) {
+  Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Text(
+      text = label,
+      style = MaterialTheme.typography.bodyMedium,
+      color = MaterialTheme.colorScheme.onSurface,
+    )
+    Button(
+      onClick = onClick,
+      colors = ButtonDefaults.buttonColors(containerColor = AmberWarning, contentColor = ObsidianBg),
+      shape = RoundedCornerShape(12.dp),
+      modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag(tag),
+    ) {
+      Text(buttonText, fontWeight = FontWeight.Bold)
+    }
+  }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SendRadarScreen(
@@ -119,6 +265,8 @@ fun SendRadarScreen(
   discoveredDevices: List<DiscoveredDevice>,
   isScanning: Boolean,
   wifiDirectStatus: String,
+  readiness: DeviceReadiness,
+  onRefreshReadiness: () -> Unit,
   onStartRadar: (Boolean) -> Unit,
   onStopRadar: () -> Unit,
   onSelectDevice: (DiscoveredDevice) -> Unit,
@@ -126,6 +274,7 @@ fun SendRadarScreen(
   onBack: () -> Unit,
 ) {
   BackHandler(onBack = onBack)
+  ResumeReadinessEffect(onRefreshReadiness)
 
   val context = LocalContext.current
   var manualHost by remember { mutableStateOf("") }
@@ -133,15 +282,11 @@ fun SendRadarScreen(
   var manualPin by remember { mutableStateOf("") }
   var showQrScanner by remember { mutableStateOf(false) }
 
-  val nearbyPermission =
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      Manifest.permission.NEARBY_WIFI_DEVICES
-    } else {
-      Manifest.permission.ACCESS_FINE_LOCATION
-    }
+  val nearbyPermission = nearbyWifiPermissionName()
 
   val wifiDirectPermLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      onRefreshReadiness()
       onStartRadar(granted)
     }
 
@@ -189,7 +334,10 @@ fun SendRadarScreen(
           },
           actions = {
             IconButton(
-              onClick = { onStartRadar(false) },
+              onClick = {
+                onRefreshReadiness()
+                onStartRadar(false)
+              },
               modifier = Modifier.testTag("rescan_button"),
             ) {
               Icon(Icons.Rounded.Refresh, contentDescription = "Rescan", tint = NeonViolet)
@@ -207,6 +355,15 @@ fun SendRadarScreen(
           contentPadding = PaddingValues(16.dp),
           verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+          if (!readiness.isHotspotAndP2pReady) {
+            item {
+              DeviceReadinessCard(
+                readiness = readiness,
+                onRequestNearbyPermission = { wifiDirectPermLauncher.launch(nearbyPermission) },
+              )
+            }
+          }
+
           // Animated Radar Sweep + Scan Receiver QR Button
           item {
             Surface(
@@ -232,7 +389,11 @@ fun SendRadarScreen(
                 )
 
                 Button(
-                  onClick = { cameraPermLauncher.launch(Manifest.permission.CAMERA) },
+                  onClick = {
+                    try {
+                      cameraPermLauncher.launch(Manifest.permission.CAMERA)
+                    } catch (_: Throwable) {}
+                  },
                   colors =
                     ButtonDefaults.buttonColors(
                       containerColor = CyberCyan,
@@ -246,11 +407,23 @@ fun SendRadarScreen(
                 ) {
                   Icon(AppIcons.QrCodeScanner, contentDescription = null)
                   Spacer(modifier = Modifier.width(8.dp))
-                  Text("Scan Receiver QR Code", fontWeight = FontWeight.Bold)
+                  Text("Scan QR to Auto-Connect & Send", fontWeight = FontWeight.Bold)
                 }
 
                 OutlinedButton(
-                  onClick = { wifiDirectPermLauncher.launch(nearbyPermission) },
+                  onClick = {
+                    if (!readiness.locationEnabled) {
+                      Toast.makeText(
+                          context,
+                          "Turn ON Location Services first for Wi-Fi Direct",
+                          Toast.LENGTH_SHORT,
+                        )
+                        .show()
+                    }
+                    try {
+                      wifiDirectPermLauncher.launch(nearbyPermission)
+                    } catch (_: Throwable) {}
+                  },
                   shape = RoundedCornerShape(12.dp),
                   modifier =
                     Modifier.fillMaxWidth()
@@ -353,7 +526,7 @@ fun SendRadarScreen(
                 )
                 Text(
                   text =
-                    "Or enter the receiver's IP & 4-digit PIN (or paste their ammarshare:// link).",
+                    "Or enter the receiver's IP & 4-digit PIN (or paste their fastshare:// link).",
                   style = MaterialTheme.typography.bodyMedium,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -361,8 +534,8 @@ fun SendRadarScreen(
                   value = manualHost,
                   onValueChange = { manualHost = it },
                   singleLine = true,
-                  label = { Text("Receiver IP or ammarshare:// link") },
-                  placeholder = { Text("192.168.43.1") },
+                  label = { Text("Receiver IP or fastshare:// link") },
+                  placeholder = { Text("192.168.49.1") },
                   modifier = Modifier.fillMaxWidth().testTag("manual_host_input"),
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -424,21 +597,57 @@ fun SendRadarScreen(
 fun ReceiveRadarScreen(
   deviceName: String,
   receiverInfo: ReceiverSessionInfo,
+  readiness: DeviceReadiness,
+  hotspotInfo: LocalHotspotInfo,
+  isStartingHotspot: Boolean,
+  onRefreshReadiness: () -> Unit,
+  onEnsureAutoHotspot: () -> Unit,
   onStartReceive: () -> Unit,
   onStopReceive: () -> Unit,
+  onToggleHotspot: () -> Unit,
   onBack: () -> Unit,
 ) {
   BackHandler(onBack = onBack)
+  ResumeReadinessEffect {
+    onRefreshReadiness()
+    onEnsureAutoHotspot()
+  }
 
   val context = LocalContext.current
   val clipboard = LocalClipboardManager.current
+  val nearbyPermission = nearbyWifiPermissionName()
+
+  val nearbyPermLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      onRefreshReadiness()
+      if (granted) {
+        onToggleHotspot()
+      } else {
+        Toast.makeText(
+            context,
+            "Nearby Wi-Fi / Location permission is required for Fast Share Auto-Hotspot",
+            Toast.LENGTH_SHORT,
+          )
+          .show()
+      }
+    }
 
   LaunchedEffect(Unit) { onStartReceive() }
   DisposableEffect(Unit) { onDispose { onStopReceive() } }
 
   val pairingLink =
     remember(receiverInfo, deviceName) {
-      "ammarshare://${receiverInfo.localIp}:${receiverInfo.port}?pin=${receiverInfo.pin}&name=${Uri.encode(deviceName)}"
+      val base =
+        "fastshare://${receiverInfo.localIp}:${receiverInfo.port}?pin=${receiverInfo.pin}&name=${Uri.encode(deviceName)}"
+      if (receiverInfo.hotspotSsid.isNotBlank()) {
+        val pwdParam =
+          if (receiverInfo.hotspotPassphrase.isNotBlank())
+            "&pwd=${Uri.encode(receiverInfo.hotspotPassphrase)}"
+          else ""
+        "$base&ssid=${Uri.encode(receiverInfo.hotspotSsid)}$pwdParam"
+      } else {
+        base
+      }
     }
 
   Scaffold(
@@ -458,9 +667,11 @@ fun ReceiveRadarScreen(
           Column {
             Text("Receive Mode", style = MaterialTheme.typography.titleLarge)
             Text(
-              text = "Saving to Downloads/AmmarShare",
+              text = "Saving to /storage/emulated/0/Ammarshare",
               style = MaterialTheme.typography.labelSmall,
               color = CyberCyan,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
             )
           }
         },
@@ -477,6 +688,175 @@ fun ReceiveRadarScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
       ) {
+        if (!readiness.isHotspotAndP2pReady) {
+          item {
+            DeviceReadinessCard(
+              readiness = readiness,
+              onRequestNearbyPermission = {
+                try {
+                  nearbyPermLauncher.launch(nearbyPermission)
+                } catch (_: Throwable) {}
+              },
+            )
+          }
+        }
+
+        // Direct Fast Share Auto-Hotspot Card (like SHAREit)
+        item {
+          Surface(
+            shape = RoundedCornerShape(22.dp),
+            color =
+              if (hotspotInfo.active) EmeraldSuccess.copy(alpha = 0.12f) else ObsidianSurfaceHigh,
+            modifier =
+              Modifier.fillMaxWidth()
+                .border(
+                  1.5.dp,
+                  if (hotspotInfo.active) EmeraldSuccess else ElectricViolet.copy(alpha = 0.7f),
+                  RoundedCornerShape(22.dp),
+                ),
+          ) {
+            Column(
+              modifier = Modifier.padding(16.dp),
+              verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                Icon(
+                  imageVector = AppIcons.Wifi,
+                  contentDescription = null,
+                  tint = if (hotspotInfo.active) EmeraldSuccess else CyberCyan,
+                )
+                Text(
+                  text =
+                    if (hotspotInfo.active) "Fast Share Auto-Hotspot Active"
+                    else "Fast Share Auto-Hotspot",
+                  style = MaterialTheme.typography.titleMedium,
+                  color = if (hotspotInfo.active) EmeraldSuccess else CyberCyan,
+                  fontWeight = FontWeight.Bold,
+                )
+              }
+
+              Text(
+                text =
+                  if (hotspotInfo.active)
+                    "QR code below carries Hotspot credentials. Sender scanning this QR will auto-join & transfer immediately!"
+                  else
+                    "Starts automatically when Wi-Fi & Location are ready — bypasses slow routers for 100+ MB/s SHAREit-style transfers.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+
+              if (hotspotInfo.active && hotspotInfo.ssid.isNotBlank()) {
+                Surface(
+                  shape = RoundedCornerShape(12.dp),
+                  color = ObsidianSurface,
+                  modifier = Modifier.fillMaxWidth(),
+                ) {
+                  Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                  ) {
+                    Text(
+                      text = "Hotspot Wi-Fi: ${hotspotInfo.ssid}",
+                      style = MaterialTheme.typography.labelMedium,
+                      fontFamily = JetBrainsMonoFamily,
+                      color = CyberCyan,
+                      modifier = Modifier.testTag("hotspot_ssid_text"),
+                    )
+                    if (hotspotInfo.passphrase.isNotBlank()) {
+                      Text(
+                        text = "Password: ${hotspotInfo.passphrase}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontFamily = JetBrainsMonoFamily,
+                        color = NeonViolet,
+                      )
+                    }
+                    if (hotspotInfo.modeLabel.isNotBlank()) {
+                      Text(
+                        text = "Engine: ${hotspotInfo.modeLabel}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = EmeraldSuccess,
+                      )
+                    }
+                  }
+                }
+              }
+
+              if (!hotspotInfo.error.isNullOrBlank()) {
+                Text(
+                  text = hotspotInfo.error,
+                  style = MaterialTheme.typography.bodyMedium,
+                  color = AmberWarning,
+                )
+              }
+
+              if (hotspotInfo.active) {
+                OutlinedButton(
+                  onClick = onToggleHotspot,
+                  shape = RoundedCornerShape(14.dp),
+                  modifier =
+                    Modifier.fillMaxWidth()
+                      .minimumInteractiveComponentSize()
+                      .testTag("toggle_hotspot_button"),
+                ) {
+                  Text("Stop Fast Share Hotspot", color = CrimsonError)
+                }
+              } else {
+                Button(
+                  enabled = !isStartingHotspot,
+                  onClick = {
+                    if (!readiness.hasNearbyPermission) {
+                      try {
+                        nearbyPermLauncher.launch(nearbyPermission)
+                      } catch (_: Throwable) {}
+                    } else if (!readiness.locationEnabled) {
+                      Toast.makeText(
+                          context,
+                          "Turn ON Location Services first to start Hotspot",
+                          Toast.LENGTH_SHORT,
+                        )
+                        .show()
+                      openLocationSettings(context)
+                    } else if (!readiness.wifiEnabled) {
+                      Toast.makeText(context, "Turn ON Wi-Fi first", Toast.LENGTH_SHORT).show()
+                      openWifiSettings(context)
+                    } else {
+                      onToggleHotspot()
+                    }
+                  },
+                  colors =
+                    ButtonDefaults.buttonColors(
+                      containerColor = CyberCyan,
+                      contentColor = ObsidianBg,
+                    ),
+                  shape = RoundedCornerShape(14.dp),
+                  modifier =
+                    Modifier.fillMaxWidth()
+                      .minimumInteractiveComponentSize()
+                      .testTag("toggle_hotspot_button"),
+                ) {
+                  if (isStartingHotspot) {
+                    CircularProgressIndicator(
+                      modifier = Modifier.size(18.dp),
+                      strokeWidth = 2.dp,
+                      color = ObsidianBg,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Starting Hotspot...", fontWeight = FontWeight.Bold)
+                  } else {
+                    Icon(AppIcons.Bolt, contentDescription = null)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Start Fast Share Hotspot", fontWeight = FontWeight.Bold)
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // QR Code & PIN Card
         item {
           Surface(
             shape = RoundedCornerShape(26.dp),
@@ -590,6 +970,8 @@ fun ReceiveRadarScreen(
 @Composable
 fun TransferProgressOverlay(
   state: TransferProgressState,
+  recentHistory: List<TransferRecord> = emptyList(),
+  onInstallApk: (TransferRecord) -> Unit = {},
   onCancel: () -> Unit,
   onDone: () -> Unit,
 ) {
@@ -759,6 +1141,36 @@ fun TransferProgressOverlay(
             Text("Cancel Transfer", color = CrimsonError)
           }
         } else {
+          val installableApk =
+            if (state.status == TransferStatus.COMPLETED && state.direction == TransferDirection.RECEIVE) {
+              recentHistory.take(12).firstOrNull { rec ->
+                rec.direction == TransferDirection.RECEIVE &&
+                  (rec.fileName.equals("base.apk", ignoreCase = true) ||
+                    (rec.fileName.endsWith(".apk", ignoreCase = true) &&
+                      !rec.fileName.startsWith("split_", ignoreCase = true)))
+              }
+            } else null
+
+          if (installableApk != null) {
+            Button(
+              onClick = { onInstallApk(installableApk) },
+              colors =
+                ButtonDefaults.buttonColors(
+                  containerColor = EmeraldSuccess,
+                  contentColor = ObsidianBg,
+                ),
+              shape = RoundedCornerShape(14.dp),
+              modifier =
+                Modifier.fillMaxWidth()
+                  .minimumInteractiveComponentSize()
+                  .testTag("overlay_install_apk_button"),
+            ) {
+              Icon(AppIcons.InstallApk, contentDescription = null)
+              Spacer(modifier = Modifier.width(8.dp))
+              Text("Install ${installableApk.fileName}", fontWeight = FontWeight.Bold)
+            }
+          }
+
           Button(
             onClick = onDone,
             colors =

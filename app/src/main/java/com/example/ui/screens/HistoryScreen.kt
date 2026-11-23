@@ -21,6 +21,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -29,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,10 +50,13 @@ import com.example.model.ShareCategory
 import com.example.model.TransferDirection
 import com.example.model.TransferRecord
 import com.example.ui.components.AppIcons
+import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CyberCyan
 import com.example.ui.theme.ElectricViolet
 import com.example.ui.theme.EmeraldSuccess
+import com.example.ui.theme.JetBrainsMonoFamily
 import com.example.ui.theme.NeonViolet
+import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.ObsidianCardBorder
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianSurfaceHigh
@@ -63,6 +70,9 @@ enum class HistoryFilter(val label: String) {
 @Composable
 fun HistoryScreen(
   records: List<TransferRecord>,
+  hasPublicStorageAccess: Boolean,
+  onRequestPublicStorage: () -> Unit,
+  onInstallApk: (TransferRecord) -> Unit,
   onOpenRecord: (TransferRecord) -> Unit,
   onShareRecord: (TransferRecord) -> Unit,
   onClearHistory: () -> Unit,
@@ -80,8 +90,50 @@ fun HistoryScreen(
 
   Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     Column(modifier = Modifier.fillMaxSize().widthIn(max = 680.dp)) {
+      // Public folder destination banner
+      Surface(
+        shape = RoundedCornerShape(14.dp),
+        color =
+          if (hasPublicStorageAccess) EmeraldSuccess.copy(alpha = 0.12f)
+          else AmberWarning.copy(alpha = 0.12f),
+        modifier =
+          Modifier.fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .border(
+              1.dp,
+              if (hasPublicStorageAccess) EmeraldSuccess.copy(alpha = 0.5f)
+              else AmberWarning.copy(alpha = 0.55f),
+              RoundedCornerShape(14.dp),
+            ),
+      ) {
+        Row(
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "Public Received Folder:",
+              style = MaterialTheme.typography.labelSmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+              text = "/storage/emulated/0/Ammarshare",
+              style = MaterialTheme.typography.labelMedium,
+              fontFamily = JetBrainsMonoFamily,
+              color = if (hasPublicStorageAccess) EmeraldSuccess else AmberWarning,
+            )
+          }
+          if (!hasPublicStorageAccess) {
+            TextButton(onClick = onRequestPublicStorage) {
+              Text("Enable", color = AmberWarning, fontWeight = FontWeight.Bold)
+            }
+          }
+        }
+      }
+
       Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
       ) {
@@ -142,7 +194,7 @@ fun HistoryScreen(
             Spacer(modifier = Modifier.height(6.dp))
             Text(
               text =
-                "Received apps, videos, and folders are saved directly to Downloads/AmmarShare on your device.",
+                "Received APKs, MovieBox videos, and folders are saved publicly to /storage/emulated/0/Ammarshare.",
               style = MaterialTheme.typography.bodyMedium,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
               textAlign = TextAlign.Center,
@@ -157,6 +209,7 @@ fun HistoryScreen(
           items(filtered, key = { it.id }) { record ->
             TransferRecordRow(
               record = record,
+              onInstall = { onInstallApk(record) },
               onOpen = { onOpenRecord(record) },
               onShare = { onShareRecord(record) },
               compact = false,
@@ -171,6 +224,7 @@ fun HistoryScreen(
 @Composable
 fun TransferRecordRow(
   record: TransferRecord,
+  onInstall: () -> Unit,
   onOpen: () -> Unit,
   onShare: () -> Unit,
   compact: Boolean,
@@ -184,6 +238,11 @@ fun TransferRecordRow(
       ShareCategory.FILES -> AppIcons.InsertDriveFile
     }
   val isReceive = record.direction == TransferDirection.RECEIVE
+  val isApk =
+    record.fileName.endsWith(".apk", ignoreCase = true) ||
+      record.mimeType == "application/vnd.android.package-archive"
+  val hasLocalTarget =
+    !record.savedFilePath.isNullOrBlank() || !record.savedUriString.isNullOrBlank()
 
   Surface(
     shape = RoundedCornerShape(16.dp),
@@ -241,15 +300,49 @@ fun TransferRecordRow(
             overflow = TextOverflow.Ellipsis,
           )
         }
+        if (isReceive && record.relativePath.isNotBlank()) {
+          Text(
+            text = "/Ammarshare/${record.relativePath}",
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = JetBrainsMonoFamily,
+            color = CyberCyan.copy(alpha = 0.8f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
       }
 
-      if (!compact && isReceive) {
-        IconButton(onClick = onOpen) {
-          Icon(
-            imageVector = AppIcons.OpenInNew,
-            contentDescription = "Open ${record.fileName}",
-            tint = CyberCyan,
-          )
+      if (!compact && isReceive && hasLocalTarget) {
+        if (isApk) {
+          Button(
+            onClick = onInstall,
+            colors =
+              ButtonDefaults.buttonColors(
+                containerColor = EmeraldSuccess,
+                contentColor = ObsidianBg,
+              ),
+            shape = RoundedCornerShape(10.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+            modifier =
+              Modifier.minimumInteractiveComponentSize()
+                .testTag("install_apk_${record.id}"),
+          ) {
+            Icon(
+              imageVector = AppIcons.InstallApk,
+              contentDescription = "Install ${record.fileName}",
+              modifier = Modifier.size(16.dp),
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Install", fontWeight = FontWeight.Bold)
+          }
+        } else {
+          IconButton(onClick = onOpen) {
+            Icon(
+              imageVector = AppIcons.OpenInNew,
+              contentDescription = "Open ${record.fileName}",
+              tint = CyberCyan,
+            )
+          }
         }
         IconButton(onClick = onShare) {
           Icon(

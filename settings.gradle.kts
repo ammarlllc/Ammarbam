@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Ammar Share"
+rootProject.name = "Fast Share"
 
 include(":app")

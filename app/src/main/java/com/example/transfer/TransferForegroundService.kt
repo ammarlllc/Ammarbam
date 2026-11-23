@@ -44,21 +44,27 @@ class TransferForegroundService : Service() {
 
   override fun onCreate() {
     super.onCreate()
-    createNotificationChannel()
+    try {
+      createNotificationChannel()
+    } catch (_: Throwable) {}
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    val title = intent?.getStringExtra(EXTRA_TITLE) ?: "Ammar Share"
-    val text = intent?.getStringExtra(EXTRA_TEXT) ?: "Turbo transfer engine active"
-    val notification = buildNotification(title, text)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      startForeground(
-        NOTIFICATION_ID,
-        notification,
-        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-      )
-    } else {
-      startForeground(NOTIFICATION_ID, notification)
+    try {
+      val title = intent?.getStringExtra(EXTRA_TITLE) ?: "Fast Share"
+      val text = intent?.getStringExtra(EXTRA_TEXT) ?: "Turbo transfer engine active"
+      val notification = buildNotification(title, text)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        startForeground(
+          NOTIFICATION_ID,
+          notification,
+          ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+        )
+      } else {
+        startForeground(NOTIFICATION_ID, notification)
+      }
+    } catch (_: Throwable) {
+      stopSelf()
     }
     return START_NOT_STICKY
   }
@@ -67,11 +73,11 @@ class TransferForegroundService : Service() {
 
   private fun createNotificationChannel() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
       val channel =
         NotificationChannel(
             CHANNEL_ID,
-            "Ammar Share Transfers",
+            "Fast Share Transfers",
             NotificationManager.IMPORTANCE_LOW,
           )
           .apply { description = "Shows active high-speed file transfer status" }

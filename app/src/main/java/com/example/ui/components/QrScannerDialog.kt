@@ -83,10 +83,16 @@ fun QrScannerDialog(
   val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
   val handled = remember { AtomicBoolean(false) }
   var cameraError by remember { mutableStateOf<String?>(null) }
+  var boundProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
 
   DisposableEffect(Unit) {
     onDispose {
-      analysisExecutor.shutdownNow()
+      try {
+        boundProvider?.unbindAll()
+      } catch (_: Throwable) {}
+      try {
+        analysisExecutor.shutdownNow()
+      } catch (_: Throwable) {}
     }
   }
 
@@ -108,44 +114,58 @@ fun QrScannerDialog(
   ) {
     AndroidView(
       factory = { ctx ->
-        val previewView = PreviewView(ctx)
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-        cameraProviderFuture.addListener(
-          {
-            try {
-              val cameraProvider = cameraProviderFuture.get()
-              val preview =
-                Preview.Builder().build().also {
-                  it.surfaceProvider = previewView.surfaceProvider
-                }
-              val analyzer =
-                ImageAnalysis.Builder()
-                  .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                  .build()
-                  .also { analysis ->
-                    analysis.setAnalyzer(
-                      analysisExecutor,
-                      ZxingQrAnalyzer { decoded ->
-                        if (handled.compareAndSet(false, true)) {
-                          ContextCompat.getMainExecutor(ctx).execute { onQrScanned(decoded) }
-                        }
-                      },
-                    )
+        val previewView = PreviewView(ctx).apply {
+          implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+        }
+        try {
+          val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+          cameraProviderFuture.addListener(
+            {
+              try {
+                val cameraProvider = cameraProviderFuture.get()
+                boundProvider = cameraProvider
+                val preview =
+                  Preview.Builder().build().also {
+                    it.surfaceProvider = previewView.surfaceProvider
+                  }
+                val analyzer =
+                  ImageAnalysis.Builder()
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build()
+                    .also { analysis ->
+                      analysis.setAnalyzer(
+                        analysisExecutor,
+                        ZxingQrAnalyzer { decoded ->
+                          if (handled.compareAndSet(false, true)) {
+                            ContextCompat.getMainExecutor(ctx).execute {
+                              try {
+                                cameraProvider.unbindAll()
+                              } catch (_: Throwable) {}
+                              onQrScanned(decoded)
+                            }
+                          }
+                        },
+                      )
+                    }
+
+                val selector =
+                  if (cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                    CameraSelector.DEFAULT_BACK_CAMERA
+                  } else {
+                    CameraSelector.DEFAULT_FRONT_CAMERA
                   }
 
-              cameraProvider.unbindAll()
-              cameraProvider.bindToLifecycle(
-                lifecycleOwner,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                analyzer,
-              )
-            } catch (e: Exception) {
-              cameraError = e.localizedMessage ?: "Camera unavailable"
-            }
-          },
-          ContextCompat.getMainExecutor(ctx),
-        )
+                cameraProvider.unbindAll()
+                cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, analyzer)
+              } catch (t: Throwable) {
+                cameraError = t.localizedMessage ?: "Unable to start camera"
+              }
+            },
+            ContextCompat.getMainExecutor(ctx),
+          )
+        } catch (t: Throwable) {
+          cameraError = t.localizedMessage ?: "Camera initialization failed"
+        }
         previewView
       },
       modifier = Modifier.fillMaxSize(),
@@ -182,7 +202,7 @@ fun QrScannerDialog(
     ) {
       Surface(
         shape = RoundedCornerShape(50),
-        color = ObsidianSurfaceHigh.copy(alpha = 0.85f),
+        color = ObsidianSurfaceHigh.copy(alpha = 0.88f),
       ) {
         Text(
           text = "Scan Receiver QR Code",
@@ -197,7 +217,7 @@ fun QrScannerDialog(
         modifier =
           Modifier.size(48.dp)
             .clip(CircleShape)
-            .background(ObsidianSurfaceHigh.copy(alpha = 0.85f))
+            .background(ObsidianSurfaceHigh.copy(alpha = 0.88f))
             .testTag("close_qr_scanner_button"),
       ) {
         Icon(Icons.Rounded.Close, contentDescription = "Close scanner", tint = Color.White)
@@ -211,7 +231,7 @@ fun QrScannerDialog(
     ) {
       Surface(
         shape = RoundedCornerShape(18.dp),
-        color = ObsidianSurfaceHigh.copy(alpha = 0.9f),
+        color = ObsidianSurfaceHigh.copy(alpha = 0.92f),
         modifier =
           Modifier.border(1.dp, ElectricViolet.copy(alpha = 0.6f), RoundedCornerShape(18.dp)),
       ) {
@@ -222,14 +242,14 @@ fun QrScannerDialog(
           Text(
             text =
               cameraError
-                ?: "Point camera at the QR code on the receiver's Ammar Share screen",
+                ?: "Point camera at the QR code on the receiver's Fast Share screen",
             style = MaterialTheme.typography.bodyMedium,
             color = if (cameraError != null) Color(0xFFFF8A80) else Color.White,
             textAlign = TextAlign.Center,
           )
           Spacer(modifier = Modifier.height(2.dp))
           Text(
-            text = "Connects & transfers automatically at Turbo speed",
+            text = "Auto-joins Fast Share Hotspot & starts transfer",
             style = MaterialTheme.typography.labelSmall,
             color = CyberCyan,
           )
@@ -254,36 +274,54 @@ private class ZxingQrAnalyzer(private val onDecoded: (String) -> Unit) : ImageAn
   override fun analyze(imageProxy: ImageProxy) {
     try {
       val plane = imageProxy.planes.firstOrNull() ?: return
-      val buffer = plane.buffer
-      val rowStride = plane.rowStride
       val width = imageProxy.width
       val height = imageProxy.height
+      if (width <= 0 || height <= 0) return
 
-      val yData =
-        if (rowStride == width) {
-          ByteArray(buffer.remaining()).also { buffer.get(it) }
-        } else {
-          val tight = ByteArray(width * height)
-          val rowBuf = ByteArray(rowStride)
-          for (y in 0 until height) {
-            val toRead = minOf(rowStride, buffer.remaining())
-            buffer.get(rowBuf, 0, toRead)
-            System.arraycopy(rowBuf, 0, tight, y * width, width)
+      val buffer = plane.buffer.duplicate()
+      buffer.rewind()
+      val rowStride = plane.rowStride
+      val pixelStride = plane.pixelStride.coerceAtLeast(1)
+
+      val yData = ByteArray(width * height)
+      if (pixelStride == 1 && rowStride == width && buffer.remaining() >= width * height) {
+        buffer.get(yData, 0, width * height)
+      } else {
+        val totalRemaining = buffer.remaining()
+        val raw = ByteArray(totalRemaining)
+        buffer.get(raw)
+        for (y in 0 until height) {
+          val rowOffset = y * rowStride
+          if (rowOffset >= raw.size) break
+          if (pixelStride == 1) {
+            val copyLen = minOf(width, raw.size - rowOffset)
+            System.arraycopy(raw, rowOffset, yData, y * width, copyLen)
+          } else {
+            for (x in 0 until width) {
+              val idx = rowOffset + x * pixelStride
+              if (idx >= raw.size) break
+              yData[y * width + x] = raw[idx]
+            }
           }
-          tight
         }
+      }
 
       val source = PlanarYUVLuminanceSource(yData, width, height, 0, 0, width, height, false)
       val bitmap = BinaryBitmap(HybridBinarizer(source))
       val result = reader.decodeWithState(bitmap)
-      if (!result.text.isNullOrBlank()) {
-        onDecoded(result.text)
+      val text = result?.text
+      if (!text.isNullOrBlank()) {
+        onDecoded(text)
       }
-    } catch (_: Exception) {
-      // No QR in frame yet
+    } catch (_: Throwable) {
+      // Ignore frame decode errors / NotFoundException safely
     } finally {
-      reader.reset()
-      imageProxy.close()
+      try {
+        reader.reset()
+      } catch (_: Throwable) {}
+      try {
+        imageProxy.close()
+      } catch (_: Throwable) {}
     }
   }
 }

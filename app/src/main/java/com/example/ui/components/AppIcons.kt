@@ -787,4 +787,144 @@ object AppIcons {
       }
     }
   }
+
+  val Terminal: ImageVector by lazy {
+    icon("Terminal") {
+      path(fill = SolidColor(Color.Black)) {
+        moveTo(20f, 4f)
+        horizontalLineTo(4f)
+        curveTo(2.89f, 4f, 2f, 4.9f, 2f, 6f)
+        verticalLineToRelative(12f)
+        curveToRelative(0f, 1.1f, 0.89f, 2f, 2f, 2f)
+        horizontalLineToRelative(16f)
+        curveToRelative(1.1f, 0f, 2f, -0.9f, 2f, -2f)
+        verticalLineTo(6f)
+        curveToRelative(0f, -1.1f, -0.89f, -2f, -2f, -2f)
+        close()
+        moveTo(20f, 18f)
+        horizontalLineTo(4f)
+        verticalLineTo(8f)
+        horizontalLineToRelative(16f)
+        verticalLineToRelative(10f)
+        close()
+        moveTo(18f, 17f)
+        horizontalLineToRelative(-6f)
+        verticalLineToRelative(-2f)
+        horizontalLineToRelative(6f)
+        verticalLineToRelative(2f)
+        close()
+        moveTo(7.5f, 17f)
+        lineToRelative(-1.41f, -1.41f)
+        lineTo(8.67f, 13f)
+        lineToRelative(-2.59f, -2.59f)
+        lineTo(7.5f, 9f)
+        lineToRelative(4f, 4f)
+        lineToRelative(-4f, 4f)
+        close()
+      }
+    }
+  }
+
+  val InstallApk: ImageVector by lazy {
+    icon("InstallApk") {
+      path(fill = SolidColor(Color.Black)) {
+        moveTo(17f, 1.01f)
+        lineTo(7f, 1f)
+        curveTo(5.9f, 1f, 5f, 1.9f, 5f, 3f)
+        verticalLineToRelative(18f)
+        curveToRelative(0f, 1.1f, 0.9f, 2f, 2f, 2f)
+        horizontalLineToRelative(10f)
+        curveToRelative(1.1f, 0f, 2f, -0.9f, 2f, -2f)
+        verticalLineTo(3f)
+        curveToRelative(0f, -1.1f, -0.9f, -1.99f, -2f, -1.99f)
+        close()
+        moveTo(17f, 19f)
+        horizontalLineTo(7f)
+        verticalLineTo(5f)
+        horizontalLineToRelative(10f)
+        verticalLineToRelative(14f)
+        close()
+        moveTo(16f, 13f)
+        horizontalLineToRelative(-3f)
+        verticalLineTo(8f)
+        horizontalLineToRelative(-2f)
+        verticalLineToRelative(5f)
+        horizontalLineTo(8f)
+        lineToRelative(4f, 4f)
+        lineToRelative(4f, -4f)
+        close()
+      }
+    }
+  }
+
+  val Movie: ImageVector by lazy {
+    icon("Movie") {
+      path(fill = SolidColor(Color.Black)) {
+        moveTo(18f, 4f)
+        lineToRelative(2f, 4f)
+        horizontalLineToRelative(-3f)
+        lineToRelative(-2f, -4f)
+        horizontalLineToRelative(-2f)
+        lineToRelative(2f, 4f)
+        horizontalLineToRelative(-3f)
+        lineToRelative(-2f, -4f)
+        horizontalLineTo(8f)
+        lineToRelative(2f, 4f)
+        horizontalLineTo(7f)
+        lineTo(5f, 4f)
+        horizontalLineTo(4f)
+        curveToRelative(-1.1f, 0f, -1.99f, 0.9f, -1.99f, 2f)
+        lineTo(2f, 18f)
+        curveToRelative(0f, 1.1f, 0.9f, 2f, 2f, 2f)
+        horizontalLineToRelative(16f)
+        curveToRelative(1.1f, 0f, 2f, -0.9f, 2f, -2f)
+        verticalLineTo(4f)
+        horizontalLineToRelative(-4f)
+        close()
+      }
+    }
+  }
+
+  val StorageFolder: ImageVector by lazy {
+    icon("StorageFolder") {
+      path(fill = SolidColor(Color.Black)) {
+        moveTo(2f, 20f)
+        horizontalLineToRelative(20f)
+        verticalLineToRelative(-4f)
+        horizontalLineTo(2f)
+        verticalLineToRelative(4f)
+        close()
+        moveTo(4f, 17f)
+        horizontalLineToRelative(2f)
+        verticalLineToRelative(2f)
+        horizontalLineTo(4f)
+        verticalLineToRelative(-2f)
+        close()
+        moveTo(2f, 4f)
+        verticalLineToRelative(4f)
+        horizontalLineToRelative(20f)
+        verticalLineTo(4f)
+        horizontalLineTo(2f)
+        close()
+        moveTo(6f, 7f)
+        horizontalLineTo(4f)
+        verticalLineTo(5f)
+        horizontalLineToRelative(2f)
+        verticalLineToRelative(2f)
+        close()
+        moveTo(2f, 14f)
+        horizontalLineToRelative(20f)
+        verticalLineToRelative(-4f)
+        horizontalLineTo(2f)
+        verticalLineToRelative(4f)
+        close()
+        moveTo(4f, 11f)
+        horizontalLineToRelative(2f)
+        verticalLineToRelative(2f)
+        horizontalLineTo(4f)
+        verticalLineToRelative(-2f)
+        close()
+      }
+    }
+  }
 }
